@@ -6,54 +6,53 @@ const http = require('http');
 const app = express();
 const server = http.createServer(app);
 
-// Create a WebSocket server on top of the HTTP server.
+// WebSocket server
 const wss = new WebSocketServer({ server });
 
-// In-memory array of messages (for demo only - not persistent!)
-let messages = [];
+// In-memory array of public chat messages
+let publicMessages = [];
 
 // When a client connects:
 wss.on('connection', (ws) => {
   console.log('Client connected via WebSocket.');
 
-  // Immediately send existing messages to the newly connected client.
-  ws.send(JSON.stringify({ type: 'init', messages }));
+  // Send current history to the new client
+  ws.send(JSON.stringify({ type: 'init-public', messages: publicMessages }));
 
-  // When this WebSocket receives a message:
+  // Handle incoming messages
   ws.on('message', (data) => {
     try {
       const parsed = JSON.parse(data);
 
-      // If the message type is "chat", broadcast it to everyone.
-      if (parsed.type === 'chat') {
+      // Handle public chat messages
+      if (parsed.type === 'public-chat') {
         const newMessage = {
-          id: parsed.id,       // e.g., unique user ID
-          text: parsed.text,   // the message text
+          username: parsed.username, 
+          text: parsed.text,
           timestamp: new Date().toLocaleTimeString(),
         };
 
-        // Push to local array
-        messages.push(newMessage);
+        publicMessages.push(newMessage);
 
-        // Broadcast to all clients
+        // Broadcast to everyone
         wss.clients.forEach((client) => {
           if (client.readyState === client.OPEN) {
-            client.send(JSON.stringify({ type: 'chat', message: newMessage }));
+            client.send(JSON.stringify({ type: 'public-chat', message: newMessage }));
           }
         });
       }
     } catch (err) {
-      console.error('Error parsing message:', err);
+      console.error('Error parsing WebSocket message:', err);
     }
   });
 
-  // When a client disconnects:
+  // On disconnect
   ws.on('close', () => {
     console.log('Client disconnected.');
   });
 });
 
-// Start the server
+// Start server
 const PORT = 3001;
 server.listen(PORT, () => {
   console.log(`WebSocket server is listening on port ${PORT}`);
