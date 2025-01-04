@@ -10,31 +10,30 @@ const wss = new WebSocketServer({ server });
 // ------------------------------
 // In-memory data
 // ------------------------------
-let publicMessages = [];       // plaintext messages for global chat
-let privateMessages = [];      // ciphertext messages for 1-to-1
-let activeConnections = {};    // username -> ws
-let publicKeys = {};           // username -> base64-encoded public key
+let publicMessages = [];      // For global (plaintext) chat
+let privateMessages = [];     // Now each message has 2 ciphertext fields
+let activeConnections = {};   // username -> ws
+let publicKeys = {};          // username -> base64 public key
 
 wss.on('connection', (ws) => {
   console.log('Client connected via WebSocket.');
 
-  // Immediately send the existing public chat
+  // Send existing public chat to new connections
   ws.send(JSON.stringify({
     type: 'init-public',
     messages: publicMessages
   }));
 
-  // Handle incoming WebSocket messages
   ws.on('message', (data) => {
     try {
       const parsed = JSON.parse(data);
 
-      // 1) Register username => store in activeConnections
+      // 1) Register username
       if (parsed.type === 'register-username') {
         activeConnections[parsed.username] = ws;
         console.log(`User "${parsed.username}" registered connection.`);
 
-        // Send relevant private messages for them
+        // Send them their relevant private messages
         const relevant = privateMessages.filter(
           (pm) => pm.from === parsed.username || pm.to === parsed.username
         );
@@ -44,13 +43,13 @@ wss.on('connection', (ws) => {
         }));
       }
 
-      // 2) Register user's public key => store in publicKeys
+      // 2) Store public key
       else if (parsed.type === 'register-publickey') {
-        publicKeys[parsed.username] = parsed.publicKey; 
+        publicKeys[parsed.username] = parsed.publicKey;
         console.log(`Stored public key of ${parsed.username}`);
       }
 
-      // 3) Request public key => user A wants user B's key
+      // 3) Provide public key on request
       else if (parsed.type === 'request-publickey') {
         const fromUser = parsed.from;
         const target = parsed.forUser;
@@ -66,66 +65,69 @@ wss.on('connection', (ws) => {
         }
       }
 
-      // 4) Public chat => store plaintext
+      // 4) Public chat (plaintext)
       else if (parsed.type === 'public-chat') {
-        const newPublic = {
+        const newPub = {
           username: parsed.username,
-          text: parsed.text,  // Not encrypted (plaintext)
+          text: parsed.text,
           timestamp: new Date().toLocaleTimeString()
         };
-        publicMessages.push(newPublic);
+        publicMessages.push(newPub);
 
         // Broadcast to all
         wss.clients.forEach((client) => {
           if (client.readyState === client.OPEN) {
             client.send(JSON.stringify({
               type: 'public-chat',
-              message: newPublic
+              message: newPub
             }));
           }
         });
       }
 
-      // 5) Private chat => store ciphertext
+      // 5) Private chat (two ciphertexts)
+      //    The client sends:
+      //    { from, to, text_for_recipient, text_for_sender, ... }
       else if (parsed.type === 'private-chat') {
-        const cipherObj = {
+        const newPM = {
           from: parsed.from,
           to: parsed.to,
-          text: parsed.text,  // ciphertext
+          text_for_recipient: parsed.text_for_recipient,
+          text_for_sender: parsed.text_for_sender,
           timestamp: new Date().toLocaleTimeString()
         };
-        privateMessages.push(cipherObj);
+        privateMessages.push(newPM);
 
-        // Deliver to recipient
+        // Deliver to recipient if online
         const recipientWs = activeConnections[parsed.to];
         if (recipientWs && recipientWs.readyState === recipientWs.OPEN) {
           recipientWs.send(JSON.stringify({
             type: 'private-chat',
-            message: cipherObj
+            message: newPM
           }));
         }
 
-        // Also deliver back to sender (so sender sees their own message)
+        // Also deliver back to sender
         const senderWs = activeConnections[parsed.from];
         if (senderWs && senderWs.readyState === senderWs.OPEN) {
           senderWs.send(JSON.stringify({
             type: 'private-chat',
-            message: cipherObj
+            message: newPM
           }));
         }
       }
     } catch (err) {
-      console.error('Error parsing message:', err);
+      console.error('Error parsing WebSocket message:', err);
     }
   });
 
   ws.on('close', () => {
     console.log('Client disconnected.');
-    // If you like, remove them from activeConnections here. We’ll skip for brevity.
+    // Optionally remove them from activeConnections if you want.
   });
 });
 
 const PORT = 3001;
 server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`WebSocket server listening on port ${PORT}`);
 });
